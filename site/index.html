@@ -1,42 +1,57 @@
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Live Earth – geostationary composite</title>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
 <style>
-html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:system-ui,sans-serif;color:#ddd;touch-action:none}
-#globe{position:absolute;inset:0}
-#panel{position:absolute;top:10px;left:10px;background:rgba(10,15,25,.78);padding:10px 12px;border-radius:10px;font-size:12px;max-width:320px;backdrop-filter:blur(4px)}
+html,body,#globe{margin:0;width:100%;height:100%;background:#000;overflow:hidden;font-family:system-ui,sans-serif;color:#ddd}
+#panel{position:absolute;top:10px;left:10px;background:rgba(10,15,25,.8);padding:10px 12px;border-radius:10px;font-size:12px;max-width:330px;z-index:5}
 #panel h1{font-size:15px;margin:0 0 6px}#panel table{border-collapse:collapse}#panel td{padding:2px 6px 2px 0;vertical-align:top}
 .ok{color:#7f7}.bad{color:#f77}button{margin-top:8px;background:#2a6;border:0;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px}
-#toggle{position:absolute;top:10px;right:10px;margin:0;background:#334}
+#toggle{position:absolute;top:10px;right:10px;margin:0;background:#334;z-index:5}
+.cesium-viewer-bottom{display:none}
 </style></head><body>
 <div id="globe"></div>
 <div id="panel"><h1>🌍 Live Earth (geostationary RGB)</h1>
 <div id="ctime">loading…</div><table id="sats"></table>
-<button id="refresh">Reload latest</button><div style="opacity:.7;margin-top:4px">Composite rebuilds ~every 15 min.</div>
-<div style="margin-top:6px;opacity:.7">Drag to rotate · pinch/scroll to zoom. Imagery: NOAA STAR, CIRA/RAMMB SLIDER (GeoColor). Gaps/poles: NASA Blue Marble.</div></div>
+<button id="refresh">Reload latest</button>
+<div style="opacity:.7;margin-top:6px">Rebuilt ~every 15 min · ~1.2 km/px at max zoom.<br>Drag to rotate · pinch/scroll to zoom. Imagery: NOAA STAR, CIRA/RAMMB SLIDER (GeoColor). Gaps/poles: NASA Blue Marble.</div></div>
 <button id="toggle">Hide panel</button>
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-<script src="https://unpkg.com/globe.gl@2.32.0/dist/globe.gl.min.js"></script>
 <script>
-const g = Globe()(document.getElementById('globe'))
-  .globeImageUrl('composite.jpg?t=' + Date.now())
-  .bumpImageUrl(null).backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
-  .showAtmosphere(true).atmosphereColor('#7ab').atmosphereAltitude(0.15);
-g.controls().autoRotate = false; g.controls().enableDamping = true;
-g.pointOfView({lat: 15, lng: -60, altitude: 2.4});
-addEventListener('resize', () => g.width(innerWidth).height(innerHeight));
-let last = null;
-const ago = t => { if(!t) return ''; const m = Math.round((Date.now() - Date.parse(t.split(' ')[0]))/60000); return `${m} min ago`; };
+const viewer = new Cesium.Viewer('globe', {
+  baseLayer: false, baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+  navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false, infoBox: false,
+  selectionIndicator: false, terrainProvider: new Cesium.EllipsoidTerrainProvider(), requestRenderMode: true
+});
+const scene = viewer.scene;
+scene.globe.baseColor = Cesium.Color.BLACK; scene.globe.enableLighting = false;
+scene.globe.maximumScreenSpaceError = 1.5; scene.fog.enabled = false; scene.skyAtmosphere.show = true;
+scene.screenSpaceCameraController.minimumZoomDistance = 20000;
+viewer.camera.setView({destination: Cesium.Cartesian3.fromDegrees(-60, 15, 2.2e7)});
+let layer = null, last = null;
+function setTiles(s){
+  const prov = new Cesium.UrlTemplateImageryProvider({
+    url: 'tiles/{z}/{x}/{y}.webp?v=' + encodeURIComponent(s.composite_time),
+    tilingScheme: new Cesium.GeographicTilingScheme(), maximumLevel: s.maxLevel ?? 5,
+    tileWidth: s.tileSize ?? 512, tileHeight: s.tileSize ?? 512, credit: 'NOAA STAR · CIRA/RAMMB SLIDER · NASA Blue Marble'});
+  const nl = viewer.imageryLayers.addImageryProvider(prov);
+  if (layer) { const old = layer; setTimeout(() => viewer.imageryLayers.remove(old), 4000); }
+  layer = nl; scene.requestRender();
+}
+const ago = t => t ? Math.round((Date.now() - Date.parse(t.split(' ')[0])) / 60000) + ' min ago' : '';
 async function poll(){
   try{
     const s = await (await fetch('status.json?' + Date.now())).json();
-    document.getElementById('ctime').textContent = 'Composite built: ' + (s.composite_time ? new Date(s.composite_time).toLocaleString() : 'building…');
+    document.getElementById('ctime').textContent = 'Composite built: ' + new Date(s.composite_time).toLocaleString() + (s.width ? ` · ${s.width}×${s.height}` : '');
     document.getElementById('sats').innerHTML = Object.values(s.sats).map(v =>
-      `<tr><td class="${v.ok?'ok':'bad'}">${v.ok?'●':'✕'}</td><td>${v.name}</td><td>${v.ok ? v.time.slice(11,16)+'Z<br><span style="opacity:.6">'+ago(v.time)+'</span>' : (v.error||'').slice(0,60)}</td></tr>`).join('');
-    if (s.composite_time && s.composite_time !== last){ last = s.composite_time; g.globeImageUrl('composite.jpg?t=' + Date.parse(last)); }
-  }catch(e){ document.getElementById('ctime').textContent = 'status error: ' + e; }
+      `<tr><td class="${v.ok?'ok':'bad'}">${v.ok?'●':'✕'}</td><td>${v.name}</td><td>${v.time ? v.time.slice(11,16)+'Z <span style="opacity:.6">'+ago(v.time)+'</span>' : ''}${v.ok ? '' : '<br><span class=bad>'+(v.error||'').slice(0,50)+'</span>'}</td></tr>`).join('');
+    if (s.composite_time !== last) { last = s.composite_time; setTiles(s); }
+  } catch(e) { document.getElementById('ctime').textContent = 'status error: ' + e; }
 }
-poll(); setInterval(poll, 60000);
-document.getElementById('refresh').onclick = () => poll();
-document.getElementById('toggle').onclick = e => { const p = document.getElementById('panel'); const h = p.style.display !== 'none'; p.style.display = h ? 'none' : ''; e.target.textContent = h ? 'Show panel' : 'Hide panel'; };
+poll(); setInterval(poll, 120000);
+document.getElementById('refresh').onclick = poll;
+const toggle = document.getElementById('toggle'), panel = document.getElementById('panel');
+function setPanel(show){ panel.style.display = show ? '' : 'none'; toggle.textContent = show ? 'Hide panel' : 'Info'; }
+toggle.onclick = () => setPanel(panel.style.display === 'none');
+if (innerWidth < 600) setPanel(false);
 </script></body></html>
