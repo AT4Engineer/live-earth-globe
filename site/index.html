@@ -34,8 +34,7 @@ function setTiles(s){
     url: 'tiles/{z}/{x}/{y}.webp?v=' + encodeURIComponent(s.composite_time),
     tilingScheme: new Cesium.GeographicTilingScheme(), maximumLevel: s.maxLevel ?? 5,
     tileWidth: s.tileSize ?? 512, tileHeight: s.tileSize ?? 512, credit: 'NOAA STAR · CIRA/RAMMB SLIDER · NASA Blue Marble'});
-  const nl = viewer.imageryLayers.addImageryProvider(prov);
-  if (layer) { const old = layer; setTimeout(() => viewer.imageryLayers.remove(old), 4000); }
+  viewer.imageryLayers.removeAll(true); const nl = viewer.imageryLayers.addImageryProvider(prov);
   layer = nl; scene.requestRender();
 }
 const ago = t => t ? Math.round((Date.now() - Date.parse(t.split(' ')[0])) / 60000) + ' min ago' : '';
